@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.DS_Store
+data/cache/**
+
+# Local datasets and generated indices can be large. Keep directory skeletons only.
+data/html/**
+!data/html/.gitkeep
+data/processed/**
+!data/processed/.gitkeep
+data/index/**
+!data/index/.gitkeep
+
+*.faiss
+*.npy
+*.csv
+*.xlsx

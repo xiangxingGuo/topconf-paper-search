@@ -1,0 +1,14 @@
+services:
+  paper-search:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./examples:/app/examples:ro
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      - PYTHONPATH=/app/src
+
+volumes:
+  hf-cache:

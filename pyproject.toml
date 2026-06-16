@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "topconf-paper-search"
+version = "0.1.0"
+description = "Conference-focused academic paper search over manually saved accepted-paper HTML pages."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "TopConf Paper Search Contributors"}]
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "faiss-cpu>=1.8",
+  "numpy>=1.26",
+  "openpyxl>=3.1",
+  "pandas>=2.2",
+  "sentence-transformers>=3.0",
+  "streamlit>=1.36",
+  "PyYAML>=6.0",
+  "requests>=2.34.2",
+  "lxml>=6.1.1",
+  "torchvision>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+paper-ingest = "paper_search.ingest:main"
+paper-index = "paper_search.index:main"
+paper-search = "paper_search.search:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120

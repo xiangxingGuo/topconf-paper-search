@@ -1,0 +1,4 @@
+[console_scripts]
+paper-index = paper_search.index:main
+paper-ingest = paper_search.ingest:main
+paper-search = paper_search.search:main

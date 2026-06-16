@@ -1,0 +1,27 @@
+# Optional bookkeeping for manual ingestion. The MVP does not crawl these URLs automatically.
+# Add base_url when saved HTML contains relative links.
+conferences:
+  ICML:
+    parser: pmlr
+    example_base_url: https://proceedings.mlr.press/
+  NeurIPS:
+    parser: openreview
+    example_base_url: https://openreview.net/
+  ICLR:
+    parser: iclr_virtual
+    example_base_url: https://iclr.cc/
+  MLSys:
+    parser: pmlr
+    example_base_url: https://proceedings.mlr.press/
+  CVPR:
+    parser: cvf
+    example_base_url: https://openaccess.thecvf.com/
+  ICCV:
+    parser: cvf
+    example_base_url: https://openaccess.thecvf.com/
+  ACL:
+    parser: acl
+    example_base_url: https://aclanthology.org/
+  EMNLP:
+    parser: acl
+    example_base_url: https://aclanthology.org/
