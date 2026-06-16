@@ -119,37 +119,13 @@ Install `uv` if you do not already have it:
 pip install uv
 ```
 
-Create and activate a virtual environment:
+The recommended setup is simply:
 
 ```bash
-uv venv
+uv sync
 ```
 
-On macOS/Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-On Windows PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Install the project and dependencies:
-
-```bash
-uv pip install -e .
-uv pip install pytest ruff requests
-```
-
-If you prefer using `requirements.txt`:
-
-```bash
-uv pip install -r requirements.txt
-uv pip install -e .
-```
+`uv sync` creates the virtual environment if needed, resolves dependencies from `pyproject.toml`, installs this project in editable mode, and keeps the environment reproducible. You do not need to manually run `uv venv` or `uv pip install -e .` for normal use.
 
 Core packages used by the project:
 
@@ -166,6 +142,19 @@ streamlit
 ```
 
 For GPU acceleration, install the PyTorch version that matches your CUDA environment separately. The default setup works on CPU.
+
+## Quick start with the shared `papers.csv`
+If you only want to **use the search tool** and do not want to parse official HTML pages yourself, start from a processed CSV shared by the project maintainer.
+
+Expected file:
+
+```text
+/data/processed/papers.csv
+```
+
+This CSV already contains normalized paper metadata from the supported conferences, such as title, authors, URL, conference, year, and abstracts when available. With this file, you can skip the HTML parsing step and directly build the search index.
+
+**You can jump to Step 3 if you already have `data/processed/papers.csv`**.
 
 ---
 

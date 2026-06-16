@@ -10,7 +10,7 @@ data/cache/**
 # Local datasets and generated indices can be large. Keep directory skeletons only.
 data/html/**
 !data/html/.gitkeep
-data/processed/**
+data/html/processed/**bak**
 !data/processed/.gitkeep
 data/index/**
 !data/index/.gitkeep
