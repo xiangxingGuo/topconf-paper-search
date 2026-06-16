@@ -11,11 +11,13 @@ data/cache/**
 data/html/**
 !data/html/.gitkeep
 data/html/processed/**bak**
-!data/processed/.gitkeep
 data/index/**
 !data/index/.gitkeep
+!data/processed/papers.csv
+
 
 *.faiss
 *.npy
-*.csv
 *.xlsx
+data/processed/papers.enriched.sample.csv
+data/index_bge/metadata.csv
