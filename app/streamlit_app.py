@@ -221,7 +221,7 @@ show_columns = [
     "abstract",
 ]
 existing = [c for c in show_columns if c in results.columns]
-st.dataframe(results[existing], use_container_width=True, hide_index=True)
+st.dataframe(results[existing], width="stretch", hide_index=True)
 
 st.divider()
 st.subheader("Paper cards")

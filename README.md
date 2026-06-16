@@ -118,6 +118,9 @@ Install `uv` if you do not already have it:
 ```bash
 pip install uv
 ```
+Or through the offical documents to install `uv` at https://docs.astral.sh/uv/getting-started/installation/.
+
+
 
 The recommended setup is simply:
 
