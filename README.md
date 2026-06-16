@@ -10,10 +10,10 @@ Existing tools are useful, but they do not fully match this workflow.
 
 | Tool/source | Shortcoming for this use case |
 |---|---|
-| Google Scholar | Good global coverage, but weak venue/year control. It is hard to elegantly search only accepted papers from specific top conferences. Results may include arXiv, journals, workshop papers, citations, and unrelated versions. |
-| Semantic Scholar | Has structured metadata and some venue filters, but conference filtering is incomplete or limited for many venues/years. It is not optimized for “search within this list of accepted conference papers.” |
-| Paper Copilot | Useful for paper discovery and can search some conference pages, but it still does not provide enough control over local data, custom conference sets, export, ranking experiments, or lab-specific workflows. |
-| Official conference websites | They usually publish accepted-paper lists, but the websites are not designed as flexible search engines. Search, export, semantic retrieval, and cross-conference comparison are limited. |
+| Google Scholar | **Good global coverage, but weak venue/year control**. It is hard to elegantly search only accepted papers from specific top conferences. Results may include arXiv, journals, workshop papers, citations, and unrelated versions. |
+| Semantic Scholar | Has structured metadata and some venue filters, but **conference filtering is incomplete or limited for many venues/years**. It is not optimized for “search within this list of accepted conference papers.” |
+| Paper Copilot | Useful for paper discovery and can search some conference pages, but **it still does not provide enough control over local data, custom conference sets, export, ranking experiments, or lab-specific workflows**. |
+| Official conference websites | They usually publish accepted-paper lists, but the **websites are not designed as flexible search engines**. Search, export, semantic retrieval, and cross-conference comparison are limited. |
 
 ## What this project provides
 
