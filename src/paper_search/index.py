@@ -12,25 +12,54 @@ from .schema import PAPER_COLUMNS
 from .utils import clean_text
 
 
-DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL = "BAAI/bge-large-en-v1.5"
 INDEX_FIELDS = ["title", "abstract", "both"]
 
 
 def make_index_texts(df: pd.DataFrame, field: str) -> list[str]:
-    if field == "title":
-        return [clean_text(x) for x in df["title"].fillna("").tolist()]
-    if field == "abstract":
-        texts = []
-        for title, abstract in zip(df["title"].fillna(""), df["abstract"].fillna("")):
-            # If an accepted list lacks abstract, keep it searchable by title rather than empty vector.
-            texts.append(clean_text(abstract) or clean_text(title))
-        return texts
-    if field == "both":
-        return [
-            clean_text(f"title: {title}\nabstract: {abstract}")
-            for title, abstract in zip(df["title"].fillna(""), df["abstract"].fillna(""))
-        ]
-    raise ValueError(f"Unknown index field: {field}")
+    """Create the passage/document text for each index field.
+
+    Many rows may still miss abstracts, so every field falls back to title instead
+    of producing empty vectors. The text is lightly labeled to help embedding
+    models distinguish title/abstract content.
+    """
+    titles = df["title"].fillna("").astype(str).tolist()
+    abstracts = df["abstract"].fillna("").astype(str).tolist()
+    conferences = df["conference"].fillna("").astype(str).tolist() if "conference" in df.columns else [""] * len(df)
+    years = df["year"].fillna("").astype(str).tolist() if "year" in df.columns else [""] * len(df)
+
+    texts: list[str] = []
+    for title, abstract, conference, year in zip(titles, abstracts, conferences, years):
+        title = clean_text(title)
+        abstract = clean_text(abstract)
+        conf_year = clean_text(f"{conference} {year}")
+        if field == "title":
+            text = f"title: {title}"
+        elif field == "abstract":
+            text = f"abstract: {abstract}" if abstract else f"title: {title}"
+        elif field == "both":
+            parts = [f"title: {title}"]
+            if abstract:
+                parts.append(f"abstract: {abstract}")
+            if conf_year:
+                parts.append(f"venue: {conf_year}")
+            text = "\n".join(parts)
+        else:
+            raise ValueError(f"Unknown index field: {field}")
+        texts.append(clean_text(text))
+    return texts
+
+
+def format_documents_for_model(texts: list[str], model_name: str) -> list[str]:
+    """Apply model-specific passage prefixes when useful.
+
+    BGE uses a query prefix only, so documents are unchanged. E5 models benefit
+    from a `passage:` prefix for corpus/document embeddings.
+    """
+    name = (model_name or "").lower()
+    if "e5" in name:
+        return [f"passage: {text}" for text in texts]
+    return texts
 
 
 def build_faiss_index(embeddings: np.ndarray):
@@ -76,7 +105,7 @@ def build_indexes(
     }
 
     for field in fields:
-        texts = make_index_texts(df, field)
+        texts = format_documents_for_model(make_index_texts(df, field), model_name)
         embeddings = model.encode(
             texts,
             batch_size=batch_size,

@@ -1,240 +1,525 @@
 # TopConf Paper Search
 
-A minimal, GitHub-ready MVP for searching accepted papers from selected top conferences.
+A local-first academic search tool for accepted papers from top AI/ML/NLP/CV/system conferences.
 
-The first version intentionally avoids brittle automated crawling. You save official accepted-paper HTML pages manually, then this tool:
+This project is motivated by a simple problem: when doing literature review, we often do **not** want to search the entire web. We want to search accepted papers from a controlled set of venues such as **ICML, NeurIPS, ICLR, MLSys, CVPR, ICCV, ACL, EMNLP**, and later other venues such as INFOCOM, CHIL, etc.
 
-1. parses paper metadata into one normalized CSV;
-2. builds FAISS semantic indices over `title`, `abstract`, and `title + abstract`;
-3. provides keyword, semantic, and hybrid search;
-4. filters by conference and year;
-5. exports current results or filtered conference/year subsets as CSV or Excel;
-6. runs locally or in Docker with a Streamlit UI.
+## Why another academic search tool?
 
-## MVP scope
+Existing tools are useful, but they do not fully match this workflow.
 
-Supported now:
+| Tool/source | Shortcoming for this use case |
+|---|---|
+| Google Scholar | Good global coverage, but weak venue/year control. It is hard to elegantly search only accepted papers from specific top conferences. Results may include arXiv, journals, workshop papers, citations, and unrelated versions. |
+| Semantic Scholar | Has structured metadata and some venue filters, but conference filtering is incomplete or limited for many venues/years. It is not optimized for “search within this list of accepted conference papers.” |
+| Paper Copilot | Useful for paper discovery and can search some conference pages, but it still does not provide enough control over local data, custom conference sets, export, ranking experiments, or lab-specific workflows. |
+| Official conference websites | They usually publish accepted-paper lists, but the websites are not designed as flexible search engines. Search, export, semantic retrieval, and cross-conference comparison are limited. |
 
-- Manual HTML ingestion from conference official/proceedings pages.
-- Parser hints for `iclr_virtual`, `pmlr`, `openreview`, `cvf`, `acl`, and `generic` pages.
-- Normalized CSV schema for all conferences.
-- FAISS cosine-similarity search using SentenceTransformers embeddings.
-- Keyword search, semantic search, and hybrid search.
-- Field selection: title, abstract, or title + abstract.
-- Export to `.csv` and `.xlsx`.
-- Docker Compose deployment.
+## What this project provides
 
-Not included yet:
+TopConf Paper Search takes the accepted-paper lists from official conference pages and turns them into a local searchable dataset.
 
-- A browser agent / crawler.
-- Automatic detail-page fetching for missing abstracts.
-- Zotero export.
-- User accounts or shared database backend.
+Main advantages:
+
+- **Conference-focused**: search only the venues/years you care about.
+- **Local and reproducible**: the source data is your saved HTML and generated CSV.
+- **Simple normalized schema**: all conferences become one `papers.csv`.
+- **Semantic search**: FAISS + SentenceTransformers/BGE embeddings.
+- **Lexical search**: BM25 for exact technical terms.
+- **Hybrid ranking**: Reciprocal Rank Fusion combines BM25 and semantic retrieval.
+- **Export-friendly**: CSV/Excel export is built into the UI.
+- **Easy to extend**: add new parsers, new conferences, better enrichers, or Zotero export later.
+
+The current design intentionally avoids a full browser crawler. For now, you manually save official accepted-paper HTML pages, then parse/enrich/search them locally.
+
+---
 
 ## Repository layout
 
 ```text
 .
-├── app/streamlit_app.py             # Search UI
-├── configs/conferences.yaml         # Conference parser notes
+├── app/
+│   └── streamlit_app.py             # Local search UI
+├── configs/
+│   └── conferences.yaml             # Conference parser notes
 ├── data/
-│   ├── html/                        # Put manually saved HTML here
+│   ├── html/                        # Manually saved official HTML pages
 │   ├── processed/                   # Generated papers.csv
-│   └── index/                       # Generated FAISS indices
+│   ├── index/                       # Generated FAISS indices
+│   └── cache/                       # Optional cache for fetched abstract pages
 ├── examples/                        # Tiny parser examples
 ├── src/paper_search/
 │   ├── parsers.py                   # HTML parsers
-│   ├── ingest.py                    # HTML -> CSV CLI
-│   ├── index.py                     # CSV -> FAISS CLI
+│   ├── ingest.py                    # HTML -> CSV
+│   ├── enrich_abstracts.py          # Visit paper URLs -> fill missing abstracts
+│   ├── index.py                     # CSV -> FAISS indices
+│   ├── bm25.py                      # BM25 lexical search
+│   ├── fusion.py                    # RRF fusion utilities
 │   ├── search.py                    # Search engine + CLI
-│   └── export.py                    # CSV/Excel bytes
-└── tests/test_parsers.py
+│   └── export.py                    # CSV/Excel export helpers
+└── tests/
+    └── test_parsers.py
 ```
+
+Recommended saved-HTML layout:
+
+```text
+data/html/
+├── ACL/
+│   ├── 2024/ACL 2024.html
+│   └── 2025/ACL 2025.html
+├── EMNLP/
+│   ├── 2024/EMNLP 2024.html
+│   └── 2025/EMNLP 2025.html
+├── ICLR/
+│   ├── 2024/ICLR 2024 Papers.html
+│   ├── 2025/ICLR 2025 Papers.html
+│   └── 2026/ICLR 2026 Papers.html
+├── ICML/
+│   ├── 2024/ICML 2024 Papers.html
+│   └── 2025/ICML 2025 Papers.html
+├── NeurIPS/
+│   ├── 2024/NeurIPS 2024 Papers.html
+│   └── 2025/NeurIPS 2025 Papers.html
+├── CVPR/
+├── ICCV/
+└── MLSys/
+```
+
+The `CONF/YEAR/*.html` convention lets the parser infer conference and year automatically.
+
+---
 
 ## Data schema
 
-All conferences are converted to this CSV format:
+All conferences are converted to one normalized CSV.
 
-| column | meaning |
+| Column | Meaning |
 |---|---|
-| `paper_id` | stable hash from conference/year/title/url |
-| `conference` | e.g. `ICML`, `NeurIPS`, `CVPR` |
-| `year` | conference year |
-| `title` | paper title |
-| `abstract` | abstract if available in saved HTML |
-| `authors` | authors as a semicolon/comma string |
-| `url` | paper/detail URL if available |
-| `pdf_url` | PDF URL if available |
-| `source_file` | local HTML file path |
-| `parser` | parser family that extracted the row |
+| `paper_id` | Stable hash from conference/year/title/url |
+| `conference` | Conference name, e.g., `ICML`, `NeurIPS`, `ICLR`, `ACL` |
+| `year` | Conference year |
+| `title` | Paper title |
+| `abstract` | Paper abstract, if available from saved HTML or later enrichment |
+| `authors` | Authors as one string |
+| `url` | Paper/detail page URL |
+| `pdf_url` | PDF URL, if available |
+| `source_file` | Local HTML file path |
+| `parser` | Parser family that extracted the row |
 
-## Quick start with Docker
+---
 
-### 1. Save HTML
+## Environment setup with `uv`
 
-Put manually saved official pages under a path like:
+Python requirement: **Python 3.10+**.
+
+Install `uv` if you do not already have it:
+
+```bash
+pip install uv
+```
+
+Create and activate a virtual environment:
+
+```bash
+uv venv
+```
+
+On macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+On Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Install the project and dependencies:
+
+```bash
+uv pip install -e .
+uv pip install pytest ruff requests
+```
+
+If you prefer using `requirements.txt`:
+
+```bash
+uv pip install -r requirements.txt
+uv pip install -e .
+```
+
+Core packages used by the project:
 
 ```text
-data/html/ICML/2024/icml2024.html
-data/html/CVPR/2024/cvpr2024_all.html
-data/html/ACL/2024/main_conference_papers.html
+beautifulsoup4
+faiss-cpu
+numpy
+openpyxl
+pandas
+PyYAML
+requests
+sentence-transformers
+streamlit
 ```
 
-The folder convention `CONF/YEAR/*.html` lets the CLI infer conference and year. You can also pass them explicitly.
+For GPU acceleration, install the PyTorch version that matches your CUDA environment separately. The default setup works on CPU.
 
-### 2. Build the image
+---
+
+## Step 1: Parse saved HTML into `papers.csv`
+
+If your saved HTML follows the recommended folder layout, you can parse all conferences at once:
 
 ```bash
-docker compose build
+python -m paper_search.ingest \
+  --input data/html \
+  --parser auto \
+  --output data/processed/papers.csv
 ```
 
-### 3. Ingest saved HTML into CSV
-
-Examples:
+If you want to append one conference/year at a time:
 
 ```bash
-# ICML / PMLR-style page
-docker compose run --rm paper-search \
-  python -m paper_search.ingest \
-  --input data/html/ICML/2024 \
-  --conference ICML \
-  --year 2024 \
-  --parser pmlr \
-  --base-url https://proceedings.mlr.press/v235/ \
-  --output data/processed/papers.csv \
-  --append
-
-
-# ICLR virtual page, e.g., https://iclr.cc/virtual/2025/papers.html
-docker compose run --rm paper-search \
-  python -m paper_search.ingest \
+python -m paper_search.ingest \
   --input data/html/ICLR/2025 \
   --conference ICLR \
   --year 2025 \
-  --parser iclr_virtual \
+  --parser auto \
   --base-url https://iclr.cc/ \
   --output data/processed/papers.csv \
   --append
-
-# CVPR / CVF-style page
-docker compose run --rm paper-search \
-  python -m paper_search.ingest \
-  --input data/html/CVPR/2024 \
-  --conference CVPR \
-  --year 2024 \
-  --parser cvf \
-  --base-url https://openaccess.thecvf.com/ \
-  --output data/processed/papers.csv \
-  --append
-
-# ACL-style accepted paper page
-docker compose run --rm paper-search \
-  python -m paper_search.ingest \
-  --input data/html/ACL/2024 \
-  --conference ACL \
-  --year 2024 \
-  --parser acl \
-  --base-url https://2024.aclweb.org/ \
-  --output data/processed/papers.csv \
-  --append
 ```
 
-For unknown pages, start with `--parser auto`; if extraction is noisy, retry with a specific parser or adapt `src/paper_search/parsers.py`.
+Useful parser names:
 
-### 4. Build semantic index
+| Parser | Typical source |
+|---|---|
+| `auto` | Try to infer the best parser |
+| `virtual` / `iclr_virtual` | ICLR/ICML/NeurIPS/MLSys virtual pages using paper cards/poster links |
+| `acl` | ACL/EMNLP accepted-paper pages |
+| `cvf` | CVPR/ICCV CVF openaccess pages |
+| `pmlr` | PMLR proceedings pages |
+| `openreview` | OpenReview-style pages |
+| `generic` | Fallback parser |
+
+Quickly inspect the parsed CSV:
 
 ```bash
-docker compose run --rm paper-search \
-  python -m paper_search.index \
+python - <<'PY'
+import pandas as pd
+
+df = pd.read_csv('data/processed/papers.csv')
+print(df.shape)
+print(df[['conference', 'year']].value_counts().head(20))
+print(df[['title', 'url', 'abstract']].head())
+PY
+```
+
+---
+
+## Step 2: Enrich missing abstracts from paper URLs
+
+Many accepted-paper list pages contain title and URL but not abstract. If `papers.csv` already has paper URLs, run the abstract enrichment command.
+
+Test on a small sample first:
+
+```bash
+python -m paper_search.enrich_abstracts \
   --csv data/processed/papers.csv \
-  --index-dir data/index \
-  --model-name sentence-transformers/all-MiniLM-L6-v2
+  --output data/processed/papers.enriched.sample.csv \
+  --max-rows 30 \
+  --min-wait 2.0 \
+  --max-wait 6.0
 ```
 
-The first run downloads the embedding model into the Docker `hf-cache` volume.
-
-### 5. Start UI
+If the sample looks good, update `papers.csv` directly:
 
 ```bash
-docker compose up
+python -m paper_search.enrich_abstracts \
+  --csv data/processed/papers.csv \
+  --inplace \
+  --min-wait 3.0 \
+  --max-wait 10.0 \
+  --long-pause-every 80 \
+  --long-pause-min 90 \
+  --long-pause-max 240 \
+  --save-every 25
 ```
 
-Open the Streamlit URL printed by Docker, usually `http://localhost:8501`.
+What this does:
 
-## Local development
+1. reads `data/processed/papers.csv`;
+2. finds rows where `abstract` is empty;
+3. visits the paper `url`;
+4. extracts abstract text from metadata, abstract sections, OpenReview-like text, or embedded JSON;
+5. writes the abstract back to the CSV;
+6. saves progress periodically;
+7. creates a backup before in-place updates.
+
+Recommended conservative waiting behavior:
+
+```text
+--min-wait 3.0 --max-wait 10.0
+--long-pause-every 80
+--long-pause-min 90 --long-pause-max 240
+```
+
+This is intentionally slower but friendlier to official conference sites.
+
+Check abstract coverage:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+python - <<'PY'
+import pandas as pd
 
-python -m paper_search.ingest --input examples --conference TEST --year 2026 --output data/processed/papers.csv
-python -m paper_search.index --csv data/processed/papers.csv --index-dir data/index
+df = pd.read_csv('data/processed/papers.csv')
+abstract_len = df['abstract'].fillna('').astype(str).str.len()
+print('Total papers:', len(df))
+print('Papers with non-empty abstract:', (abstract_len > 0).sum())
+print('Papers with meaningful abstract length > 50:', (abstract_len > 50).sum())
+print(df.groupby(['conference', 'year']).apply(lambda x: (x['abstract'].fillna('').astype(str).str.len() > 50).sum()))
+PY
+```
+
+---
+
+## Step 3: Build FAISS semantic indices
+
+You can choose a basic model or a stronger large model.
+
+### Option A: basic model, faster and lighter
+
+Good for quick tests and weaker machines:
+
+```bash
+python -m paper_search.index \
+  --csv data/processed/papers.csv \
+  --index-dir data/index_bge_base \
+  --model-name BAAI/bge-base-en-v1.5 \
+  --fields title abstract both
+```
+
+### Option B: large model, better quality but slower
+
+Recommended for better matching quality:
+
+```bash
+python -m paper_search.index \
+  --csv data/processed/papers.csv \
+  --index-dir data/index_bge_large \
+  --model-name BAAI/bge-large-en-v1.5 \
+  --fields title abstract both
+```
+
+Notes:
+
+- If abstracts are incomplete, `title` and `both` are still useful.
+- After changing abstracts or changing the embedding model, rebuild the index.
+- If the UI results look stale, restart Streamlit or clear its cache.
+
+---
+
+## Step 4: Start the local UI
+
+Run:
+
+```bash
 streamlit run app/streamlit_app.py
 ```
 
-Run parser tests:
+Then open the local URL printed in the terminal, usually:
 
-```bash
-pytest
+```text
+http://localhost:8501
 ```
+
+Recommended UI settings:
+
+```text
+CSV path: data/processed/papers.csv
+FAISS index directory: data/index_bge_large
+Mode: Hybrid RRF
+Search field: title + abstract
+```
+
+Try queries such as:
+
+```text
+speculative decoding
+collaborative LLM inference
+medical vision-language agent
+domain generalization
+retrieval augmented generation
+multi-agent healthcare
+```
+
+---
 
 ## Command-line search
 
+Hybrid RRF search:
+
 ```bash
-python -m paper_search.search "retrieval augmented generation" \
+python -m paper_search.search "collaborative LLM inference" \
   --csv data/processed/papers.csv \
-  --index-dir data/index \
-  --mode hybrid \
+  --index-dir data/index_bge_large \
+  --mode hybrid_rrf \
   --field both \
-  --conference ICML \
-  --year 2024 \
-  --top-k 20
+  --top-k 30
 ```
 
-Modes:
+Semantic-only search:
 
-- `keyword`: fast exact-ish term matching.
-- `semantic`: embedding search with FAISS.
-- `hybrid`: weighted blend of semantic and keyword scores.
+```bash
+python -m paper_search.search "speculative decoding" \
+  --csv data/processed/papers.csv \
+  --index-dir data/index_bge_large \
+  --mode semantic \
+  --field both \
+  --top-k 30
+```
 
-Fields:
+BM25-only search:
 
-- `title`
-- `abstract`
-- `both`
+```bash
+python -m paper_search.search "test time scaling" \
+  --csv data/processed/papers.csv \
+  --index-dir data/index_bge_large \
+  --mode bm25 \
+  --field both \
+  --top-k 30
+```
 
-## Recommended MVP workflow
+---
 
-For each conference/year:
+## Search modes
 
-1. Save accepted-paper page HTML manually.
-2. Run `paper_search.ingest` with the best parser hint.
-3. Quickly inspect `data/processed/papers.csv` for obvious parser errors.
-4. Run `paper_search.index` once after all CSV updates.
-5. Search/export from Streamlit.
+| Mode | What it does | Best for |
+|---|---|---|
+| `BM25` / `bm25` | Lexical ranking over paper text | Exact technical terms, acronyms, method names |
+| `Semantic` / `semantic` | FAISS vector search using SentenceTransformers/BGE embeddings | Conceptual search, related work discovery, terminology variation |
+| `Hybrid RRF` / `hybrid_rrf` | Retrieves from BM25 and FAISS, then combines rankings with Reciprocal Rank Fusion | Default mode; balanced search |
+| `Regex keyword` / `keyword` | Simple keyword/regex-like matching | Quick debugging or exact term filtering |
+
+Recommended default:
+
+```text
+Mode: Hybrid RRF
+Field: title + abstract
+Model: BAAI/bge-large-en-v1.5
+```
+
+---
+
+## Understanding match scores
+
+Different search modes produce different score types.
+
+### `semantic_score`
+
+This comes from FAISS similarity between the query embedding and paper embedding.
+
+Higher usually means the paper is semantically closer to the query. The exact value depends on the embedding model and normalization, so it is best used for ranking within the same query/model, not as an absolute relevance probability.
+
+### `bm25_score`
+
+This comes from BM25 lexical matching.
+
+Higher means stronger keyword overlap, especially for rare terms. BM25 is good at exact terms such as `speculative decoding`, `LoRA`, `RAG`, `diffusion`, or `vision-language model`.
+
+### `semantic_rank` and `bm25_rank`
+
+These show where the paper appeared in each individual retrieval list.
+
+For example:
+
+```text
+semantic_rank = 3
+bm25_rank = 42
+```
+
+means the paper was very strong semantically but weaker lexically.
+
+### `rrf_score` / `score` in Hybrid RRF mode
+
+Hybrid mode uses Reciprocal Rank Fusion:
+
+```text
+RRF score = 1 / (k + semantic_rank) + 1 / (k + bm25_rank)
+```
+
+A paper ranks well if it appears high in either semantic search or BM25 search. This avoids directly mixing raw FAISS and BM25 scores, which are not on the same scale.
+
+Interpretation:
+
+- high semantic rank + high BM25 rank = very strong result;
+- high semantic rank only = conceptually related, even if words differ;
+- high BM25 rank only = exact-term match, but may need manual judgment;
+- low rank in both = likely weak result.
+
+Do **not** interpret scores as probabilities. They are ranking signals.
+
+---
+
+## Recommended workflow
+
+For each new conference/year:
+
+1. Save the official accepted-paper HTML page manually.
+2. Put it under `data/html/CONF/YEAR/`.
+3. Run `paper_search.ingest` to update `papers.csv`.
+4. Inspect parsed rows for obvious title/url errors.
+5. Run `paper_search.enrich_abstracts` to fill missing abstracts.
+6. Rebuild FAISS indices with `paper_search.index`.
+7. Search in Streamlit using Hybrid RRF.
+8. Export selected results to CSV/Excel.
+
+---
 
 ## Adding a new conference
 
-1. Save one official accepted-paper HTML page into `examples/`.
-2. Run:
+1. Save one official accepted-paper HTML page under `examples/`.
+2. Try the automatic parser:
 
    ```bash
-   python -m paper_search.ingest --input examples/new_page.html --conference NEWCONF --year 2026 --parser auto --output /tmp/newconf.csv
+   python -m paper_search.ingest \
+     --input examples/new_page.html \
+     --conference NEWCONF \
+     --year 2026 \
+     --parser auto \
+     --output /tmp/newconf.csv
    ```
 
-3. If results are bad, add a targeted parser function in `src/paper_search/parsers.py`.
-4. Add a regression test in `tests/test_parsers.py`.
+3. If results are noisy, add a targeted parser in `src/paper_search/parsers.py`.
+4. Add a small regression test in `tests/test_parsers.py`.
 5. Add a note to `configs/conferences.yaml`.
+
+---
 
 ## Future roadmap
 
-Good next features after this MVP:
+Docker was part of the early prototype, but dependency installation can be slow because of PyTorch/SentenceTransformers. For now, local `uv` setup is the recommended workflow.
 
-- Detail-page enrichment: when list pages only include title/authors, fetch each paper detail page and fill abstract/PDF.
+Planned future improvements:
+
+- Docker image with prebuilt/cached ML dependencies.
+- Better conference-specific abstract enrichment from official JSON files.
 - Zotero/BibTeX/RIS export.
 - Incremental indexing so adding one conference does not rebuild every vector.
-- SQLite or DuckDB storage for larger multi-year corpora.
-- Scheduled crawler or browser agent with per-conference adapters.
-- Reranking with a cross-encoder for top 100 semantic results.
+- SQLite or DuckDB backend for larger corpora.
+- Browser-agent crawler with per-conference adapters.
+- Cross-encoder reranking for top retrieved candidates.
 - Saved searches and lab-shared annotations.
+- Deduplication across arXiv/OpenReview/proceedings versions.
+
+---
+
+## Current limitations
+
+- Abstract coverage depends on what can be extracted from each paper URL.
+- Some official pages load metadata dynamically from JavaScript/JSON.
+- Ranking quality depends on abstract coverage and embedding model choice.
+- The project is optimized for local research workflows, not a public multi-user search service.

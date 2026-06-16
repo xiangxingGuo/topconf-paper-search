@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from paper_search.export import dataframe_to_csv_bytes, dataframe_to_excel_bytes
-from paper_search.index import INDEX_FIELDS, build_indexes
+from paper_search.index import DEFAULT_MODEL, INDEX_FIELDS, build_indexes
 from paper_search.search import PaperSearchEngine
 
 
@@ -23,7 +23,7 @@ DEFAULT_INDEX = str(ROOT / "data" / "index")
 
 st.set_page_config(page_title="TopConf Paper Search", layout="wide")
 st.title("TopConf Paper Search")
-st.caption("Conference-focused keyword, semantic, and hybrid search over accepted papers.")
+st.caption("Conference-focused BM25, semantic, and RRF hybrid search over accepted papers.")
 
 
 @st.cache_resource(show_spinner=False)
@@ -60,13 +60,29 @@ with st.sidebar:
 
     st.divider()
     st.header("Search")
-    query = st.text_input("Query", placeholder="e.g., retrieval augmented generation, model editing, efficient inference")
-    mode = st.radio("Mode", ["hybrid", "semantic", "keyword"], horizontal=True)
+    query = st.text_input("Query", placeholder="e.g., speculative decoding, collaborative LLM inference, medical VLM agent")
+    mode_label = st.radio(
+        "Mode",
+        ["Hybrid RRF", "Semantic", "BM25", "Regex keyword"],
+        horizontal=False,
+        index=0,
+    )
+    mode = {
+        "Hybrid RRF": "hybrid_rrf",
+        "Semantic": "semantic",
+        "BM25": "bm25",
+        "Regex keyword": "keyword",
+    }[mode_label]
     field_label = st.selectbox("Search field", ["title + abstract", "title", "abstract"])
     field = {"title + abstract": "both", "title": "title", "abstract": "abstract"}[field_label]
     top_k = st.slider("Top K", 5, 200, 30, step=5)
-    alpha = st.slider("Hybrid semantic weight", 0.0, 1.0, 1.0, step=0.05, disabled=(mode != "hybrid"))
-    regex = st.checkbox("Use regex for keyword component", value=False)
+
+    with st.expander("Advanced ranking controls"):
+        candidate_k = st.slider("Candidate pool per retriever", 50, 1000, 300, step=50, disabled=(mode != "hybrid_rrf"))
+        rrf_k = st.slider("RRF k", 10, 120, 60, step=5, disabled=(mode != "hybrid_rrf"))
+        semantic_weight = st.slider("RRF semantic weight", 0.0, 3.0, 1.0, step=0.1, disabled=(mode != "hybrid_rrf"))
+        bm25_weight = st.slider("RRF BM25 weight", 0.0, 3.0, 1.0, step=0.1, disabled=(mode != "hybrid_rrf"))
+        st.caption("RRF combines ranks, not raw scores. This is usually more stable than weighted score averaging.")
 
     st.divider()
     st.header("Filters")
@@ -79,13 +95,13 @@ with st.sidebar:
 
     st.divider()
     with st.expander("Build / refresh semantic index"):
-        st.write("Use after ingesting a new CSV. First run may download the embedding model.")
-        model_name = st.text_input("Embedding model", "sentence-transformers/all-MiniLM-L6-v2")
+        st.write("Use after ingesting/enriching a new CSV. First run may download the embedding model.")
+        model_name = st.text_input("Embedding model", DEFAULT_MODEL)
         build_fields = st.multiselect("Index fields", INDEX_FIELDS, default=INDEX_FIELDS)
         if st.button("Build index"):
             try:
                 stats = build_indexes(csv_path, index_dir, model_name=model_name, fields=build_fields)
-                st.success(f"Built index for {stats['num_papers']} papers.")
+                st.success(f"Built index for {stats['num_papers']} papers with {stats['model_name']}.")
                 st.cache_resource.clear()
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Could not build index: {exc}")
@@ -98,28 +114,40 @@ if engine_error is not None:
 if engine is None or engine.df.empty:
     st.warning("No papers loaded yet. Ingest saved HTML into data/processed/papers.csv first.")
     st.code(
-        "python -m paper_search.ingest --input data/html/ICML/2024 --conference ICML --year 2024 --output data/processed/papers.csv --append",
+        "python -m paper_search.ingest --input data/html --parser auto --output data/processed/papers.csv",
         language="bash",
     )
     st.stop()
 
 filtered_df = engine.filter_dataframe(conferences=selected_confs, years=selected_years)
-metric_cols = st.columns(4)
+abstract_count = 0
+if "abstract" in engine.df.columns:
+    abstract_count = int((engine.df["abstract"].fillna("").astype(str).str.len() > 50).sum())
+metric_cols = st.columns(5)
 metric_cols[0].metric("Total papers", f"{len(engine.df):,}")
 metric_cols[1].metric("After filters", f"{len(filtered_df):,}")
-metric_cols[2].metric("Conferences", f"{len(engine.conferences):,}")
-metric_cols[3].metric("Years", f"{len(engine.years):,}")
+metric_cols[2].metric("Abstracts", f"{abstract_count:,}")
+metric_cols[3].metric("Conferences", f"{len(engine.conferences):,}")
+metric_cols[4].metric("Years", f"{len(engine.years):,}")
 
 try:
     if query.strip():
-        if mode == "keyword":
+        if mode == "bm25":
+            results = engine.bm25_search(
+                query,
+                field=field,
+                top_k=top_k,
+                conferences=selected_confs,
+                years=selected_years,
+            )
+        elif mode == "keyword":
             results = engine.keyword_search(
                 query,
                 field=field,
                 top_k=top_k,
                 conferences=selected_confs,
                 years=selected_years,
-                regex=regex,
+                regex=True,
             )
         elif mode == "semantic":
             results = engine.semantic_search(
@@ -130,14 +158,16 @@ try:
                 years=selected_years,
             )
         else:
-            results = engine.hybrid_search(
+            results = engine.hybrid_rrf_search(
                 query,
                 field=field,
                 top_k=top_k,
                 conferences=selected_confs,
                 years=selected_years,
-                alpha=alpha,
-                regex=regex,
+                candidate_k=candidate_k,
+                rrf_k=rrf_k,
+                semantic_weight=semantic_weight,
+                bm25_weight=bm25_weight,
             )
     else:
         results = filtered_df.head(top_k).copy()
@@ -145,8 +175,8 @@ try:
         results["match_type"] = "browse"
 except Exception as exc:  # noqa: BLE001
     st.error(f"Search failed: {exc}")
-    if mode in {"semantic", "hybrid"}:
-        st.info("Build the semantic index first, or switch to keyword mode.")
+    if mode in {"semantic", "hybrid_rrf"}:
+        st.info("Build the semantic index first, or switch to BM25 mode.")
     st.stop()
 
 st.subheader(f"Results ({len(results):,})")
@@ -180,6 +210,8 @@ export_cols[3].download_button(
 show_columns = [
     "score",
     "match_type",
+    "semantic_rank",
+    "bm25_rank",
     "conference",
     "year",
     "title",
@@ -189,11 +221,7 @@ show_columns = [
     "abstract",
 ]
 existing = [c for c in show_columns if c in results.columns]
-st.dataframe(
-    results[existing],
-    width="stretch",
-    hide_index=True
-)
+st.dataframe(results[existing], use_container_width=True, hide_index=True)
 
 st.divider()
 st.subheader("Paper cards")
@@ -207,17 +235,29 @@ for _, row in results.iterrows():
     year = row.get("year", "")
     authors = str(row.get("authors", ""))
     abstract = str(row.get("abstract", ""))
+    semantic_rank = row.get("semantic_rank", "")
+    bm25_rank = row.get("bm25_rank", "")
 
     with st.container(border=True):
         if url:
             st.markdown(f"### [{title}]({url})")
         else:
             st.markdown(f"### {title}")
-        st.caption(f"{conference} {year} · {match_type} · score={float(score):.4f}" if score != "" else f"{conference} {year}")
-        if authors:
+        rank_bits = []
+        if pd.notna(semantic_rank) and semantic_rank != "":
+            rank_bits.append(f"semantic rank={int(semantic_rank)}")
+        if pd.notna(bm25_rank) and bm25_rank != "":
+            rank_bits.append(f"BM25 rank={int(bm25_rank)}")
+        rank_text = " · " + " · ".join(rank_bits) if rank_bits else ""
+        st.caption(
+            f"{conference} {year} · {match_type} · score={float(score):.4f}{rank_text}"
+            if score != ""
+            else f"{conference} {year}"
+        )
+        if authors and authors != "nan":
             st.write(authors)
-        if pdf_url:
+        if pdf_url and pdf_url != "nan":
             st.markdown(f"[PDF]({pdf_url})")
-        if abstract:
+        if abstract and abstract != "nan":
             with st.expander("Abstract"):
                 st.write(abstract)
