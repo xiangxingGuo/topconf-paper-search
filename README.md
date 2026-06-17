@@ -32,6 +32,8 @@ Main advantages:
 
 The current design intentionally avoids a full browser crawler. For now, you manually save official accepted-paper HTML pages, then parse/enrich/search them locally.
 
+![UI1](images/UI1.png)
+![UI2](images/UI2.png)
 ---
 
 ## Repository layout
